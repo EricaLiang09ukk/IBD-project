@@ -1,0 +1,362 @@
+---
+title: "single-cell data analysis"
+author: "Yuyang liang"
+date: "2025-02-19"
+output: html_document
+details: "single-cell data analysis on histological images of IBD base on https://bodenmillergroup.github.io/IMCDataAnalysis/cell-phenotyping.html"
+---
+
+# loading packages
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# BiocManager::install(c("rmarkdown", "bookdown", "pheatmap", "viridis", "zoo", 
+#                        "devtools", "testthat", "tiff", "distill", "ggrepel", 
+#                        "patchwork", "mclust", "RColorBrewer", "uwot", "Rtsne", 
+#                        "harmony", "Seurat", "SeuratObject", "cowplot", "kohonen", 
+#                        "caret", "randomForest", "ggridges", "cowplot", 
+#                        "gridGraphics", "scales", "tiff", "harmony", "Matrix", 
+#                        "drc", "CATALYST", "scuttle", "scater", "dittoSeq", 
+#                        "tidyverse", "BiocStyle", "batchelor", "bluster", "scran", 
+#                        "Rcpp", "lisaClust", "spicyR", "iSEE", "imcRtools", "cytomapper",
+#                        "imcdatasets", "cytoviewer", "ClassifyR", "Rphenograph"))
+# install.packages("Rphenograph_0.99.1.9004.zip", repos = NULL, type = "win.binary")
+library(SpatialExperiment)
+library(SingleCellExperiment)
+library(tidyverse)
+library(imcRtools)
+library(CATALYST)
+library(scuttle)
+library(scater)
+library(batchelor)
+library(bluster)
+library(scran)
+library(harmony)
+library(Seurat)
+library(lisaClust)
+library(caret)
+library(cytomapper)
+library(cytoviewer)
+library(dittoSeq)
+library(data.table)
+library(stringr)
+library(RColorBrewer)
+library(viridis)
+library(ggrepel)
+library(EBImage)
+library(mclust)
+library(patchwork)
+library(BiocSingular)
+library(cowplot)
+library(SeuratObject)
+library(Rphenograph)
+library(igraph)
+library(BiocParallel)
+library(ggplot2)
+```
+
+
+# Getting the cell clusters information
+```{r pressure, echo=FALSE}
+# read in the data
+cur_features <- fread("/data/s01020/ibd/separate/s24-888ce/cell.csv") 
+N_images <- cur_features$ImageNumber %>% table() %>% length()
+ImageNumber_selected <- 1:N_images
+cur_features[ImageNumber %in% ImageNumber_selected,] -> cur_features.sub
+counts <- cur_features.sub[,c("Intensity_MeanIntensity_FullStack_c1", 
+                              "Intensity_MeanIntensity_FullStack_c2")]
+meta <- cur_features.sub[,c("ImageNumber", "ObjectNumber", "AreaShape_Area",
+                            "AreaShape_Eccentricity", "AreaShape_MeanRadius")]
+coords <- cur_features.sub[,c("Location_Center_X", "Location_Center_Y")]
+counts <- counts * 65535
+SpatialExperiment(assays = list(counts = t(counts)),
+                  colData = meta, 
+                  sample_id = as.character(meta$ImageNumber),
+                  spatialCoords = as.matrix(coords)) -> spe
+rownames(spe) <- c("Hematoxylin", "Eosin")
+colnames(spe) <- sprintf("cell%d", 1:nrow(cur_features.sub))
+
+### 2 -------------
+cur_pairs <- fread("/data/s01020/ibd/separate/s24-888ce/Object relationships.csv") 
+cur_pairs[(`First Image Number` %in% ImageNumber_selected) & 
+            (`Second Image Number` %in% ImageNumber_selected),] -> cur_pairs.sub
+cur_from <- paste(cur_pairs.sub$`First Image Number`, cur_pairs.sub$`First Object Number`)
+cur_to <- paste(cur_pairs.sub$`Second Image Number`, cur_pairs.sub$`Second Object Number`)
+SelfHits(from = match(cur_from, paste(spe$ImageNumber, spe$ObjectNumber)),
+         to = match(cur_to, paste(spe$ImageNumber, spe$ObjectNumber)),
+         nnode = ncol(spe)) -> edgelist
+colPair(spe, "neighborhood") <- edgelist
+
+
+## single-cell processing
+### 3 add additional metadata-------------------------
+
+df.meta <- fread("/data/s01020/ibd/sample_metadata.csv")
+df.meta %>% 
+  mutate(patient_id = str_split_fixed(`path_case&letter`, " ", 2)[,1]) %>% 
+  mutate(ROI = str_split_fixed(`path_case&letter`, " ", 2)[,2]) %>% 
+  select(study_id, `path_case&letter`, patient_id, ROI, subtype, everything()) -> df.meta
+spe$ROI <- df.meta[match(spe$sample_id, df.meta$id),]$ROI
+
+
+spe$patient_id <- df.meta[match(spe$sample_id, df.meta$id),]$`path_case&letter`
+spe$indication <- df.meta[match(spe$sample_id, df.meta$id),]$subtype
+spe$indication2 <- df.meta[match(spe$sample_id, df.meta$id),]$path_any_abnormality
+spe$indication_chron <- df.meta[match(spe$sample_id, df.meta$id),]$path_chronicity
+spe$indication_act <- df.meta[match(spe$sample_id, df.meta$id),]$path_activity
+
+spe$patient_id %>% table()
+spe$indication %>% table()
+spe$indication2 %>% table()
+spe$indication_chron %>% table()
+spe$indication_act %>% table()
+
+df.images <- fread("/data/s01020/ibd/separate/s24-888ce/Image.csv")
+spe$width_px <- df.images[spe$ImageNumber,]$Width_FullStack
+spe$height_px <- df.images[spe$ImageNumber,]$Height_FullStack
+spe$sample_name <- sprintf("%s %s", spe$patient_id, spe$ROI)
+
+
+### 4 transform counts-----------------------
+assay(spe, "exprs") <- asinh(counts(spe)/1)
+dittoRidgePlot(spe, var = "Hematoxylin", 
+               group.by = "patient_id", assay = "exprs") +
+  ggtitle("Hematoxylin - after transformation")
+
+dittoRidgePlot(spe, var = "Eosin", 
+               group.by = "patient_id", assay = "exprs") +
+  ggtitle("Eosin - after transformation")
+
+
+### 5 define interesting channels---------------
+rowData(spe)$use_channel <- c(T, T)
+
+### 6 define color schemes--------------------
+color_vectors <- list()
+
+ROI <- setNames(colorRampPalette(c("blue", "green", "red"))(length(unique(spe$ROI))), unique(spe$ROI))
+
+patient_id <- setNames(colorRampPalette(c("blue", "green", "red"))(length(unique(spe$patient_id))), unique(spe$patient_id))
+
+sample_id <- setNames(colorRampPalette(c("blue", "green", "red"))(length(unique(spe$sample_id))), unique(spe$sample_id))
+indication <- setNames(brewer.pal(length(unique(spe$indication)), name = "Set2"), 
+                unique(spe$indication))
+
+color_vectors$ROI <- ROI
+color_vectors$patient_id <- patient_id
+color_vectors$sample_id <- sample_id
+color_vectors$indication <- indication
+
+metadata(spe)$color_vectors <- color_vectors
+
+### 7 save images----------------------
+ saveRDS(spe, "/data/s01020/ibd/separate/s24-888ce/spe.rds")
+ #saveRDS(images, "/data/s01020/ibd/RDS2/images.rds")
+ #saveRDS(masks, "/data/s01020/ibd/RDS2/masks.rds")
+
+## 8 read in the data---------------
+# images <- readRDS("/data/s01020/ibd/RDS2/images.rds")
+# masks <- readRDS("/data/s01020/ibd/RDS2/masks.rds")
+spe <- readRDS("/data/s01020/ibd/separate/s24-888ce/spe.rds")
+
+
+# 9 remove all-NA rows from expression matrix-------------------------
+exprs_matrix <- assay(spe, "exprs")
+exprs_matrix <- exprs_matrix[rowSums(!is.na(exprs_matrix)) > 0, ]
+assay(spe, "exprs") <- exprs_matrix
+
+
+### 10 clean ------------------------
+clean_spe <- function(spe) {
+    spe <- spe[, !is.na(spe$AreaShape_Area)]
+    return(spe)
+}
+
+# apply the cleaning function and save result to spe_cleaned
+spe_cleaned <- clean_spe(spe)
+
+# check summary of cleaned object (NOT the function itself)
+summary(spe_cleaned$AreaShape_Area)
+
+
+
+# 11.1 use all cells----------------------------------------
+cur_cells <- sample(seq_len(ncol(spe_cleaned)), min(ncol(spe_cleaned), 2000))
+
+# 11.2 select the target genes/channels
+selected_genes <- rownames(spe_cleaned)[rowData(spe_cleaned)$use_channel]
+
+# 11.3: extract expression data for these genes in the sampled cells
+selected_exprs <- assay(spe_cleaned, "exprs")[selected_genes, cur_cells]
+
+# 11.4: replace any NA values with 0
+selected_exprs[is.na(selected_exprs)] <- 0
+
+# 11.5 write the cleaned expression matrix back into the object
+assay(spe_cleaned, "exprs")[selected_genes, cur_cells] <- selected_exprs
+
+# 12 cell-level quality control------------------------
+sum(spe_cleaned$AreaShape_Area < 5)
+spe <- spe_cleaned[, spe_cleaned$AreaShape_Area >= 5]
+
+
+### 13 save and read--------------------------
+set.seed(220225)
+ spe <- runUMAP(spe, subset_row = rowData(spe)$use_channel, exprs_values = "counts")
+ spe <- runTSNE(spe, subset_row = rowData(spe)$use_channel, exprs_values = "exprs")
+ saveRDS(spe, "/data/s01020/ibd/separate/s24-888ce/spe.RDS") 
+
+ 
+spe <- readRDS("/data/s01020/ibd/separate/s24-888ce/spe.RDS") 
+
+# low-dimensional embeddings are stored in the reducedDim slot
+reducedDim(spe, "exprs_org") <- t(assays(spe)["exprs"][[1]])
+reducedDims(spe)
+
+### 14 sample cells------------------------------
+set.seed(220619)
+cur_cells <- sample(seq_len(ncol(spe)), 2000)
+
+
+# 15.1 Phenograph clustering------------------
+mat <- t(assay(spe, "exprs")[rowData(spe)$use_channel,])
+set.seed(230619)
+out2 <- Rphenograph(mat, k = 45)
+clusters <- factor(membership(out2[[2]]))
+spe$pg_clusters <- clusters
+
+# 15.2 compute cluster centroids
+# https://mclust-org.github.io/mclust/reference/Mclust.html
+centroids <- aggregate(mat, by = list(clusters), FUN = mean)
+rownames(centroids) <- centroids[,1]
+centroids <- centroids[,-1]
+
+# 15.3 Apply Mclust to merge clusters
+# https://mclust-org.github.io/mclust/reference/Mclust.html
+set.seed(123)
+mclust_model <- Mclust(centroids, G = 20)  
+
+# 15.4 assign new clusters to cells
+merged_clusters <- factor(mclust_model$classification[as.character(clusters)])
+spe$pg_clusters_mclust <- merged_clusters
+
+# 15.5 plot new clusters
+dittoDimPlot(spe, var = "pg_clusters_mclust", 
+             reduction.use = "exprs_org", size = 0.2,
+             do.label = TRUE) +
+    ggtitle("Mclust Merged Phenograph Clusters (20 Clusters)")
+
+
+
+# 16 extract reduced dimensions------------------------------
+dim_data <- as.data.frame(reducedDim(spe, "exprs_org"))
+
+# 17 convert merged_clusters to dataframe---------------------
+cluster_data <- data.frame(Cell_ID = rownames(dim_data), Mclust_Cluster = merged_clusters)
+
+# 18 combine the dataframes------------------------------
+final_df <- cbind(cluster_data, dim_data)
+
+# 19 add new columns from spe------------------------------
+final_df$patient_id <- spe$patient_id
+final_df$indication2 <- spe$indication2
+final_df$indication <- spe$indication
+final_df$indication_act <- spe$indication_act
+final_df$indication_chron <- spe$indication_chron
+
+# 20 rename the columns------------------------------
+colnames(final_df) <- c("Cell_ID", "Mclust_Cluster", "Hematoxylin", "Eosin", 
+                        "patient_id", "indication2", "indication", 
+                        "indication_act", "indication_chron")
+
+# 21 export as CSV------------------------------
+write.csv(final_df, "/data/s01020/ibd/separate/s24-888ce/Mclust_Clusters_with_Dimensions_and_Additional_Info.csv", row.names = FALSE) 
+
+# check output
+head(final_df)
+
+
+```
+
+### combine df (only applied for those images processed one by one)
+```{r}
+# 1) define a vector of your folder names
+folders <- c("s18-15555 b1e2h12", 
+             "s18-28965 d1d2d3", 
+             "s18-29054 ef",
+             "s18-29054 hik",
+             "s19 13144a-17766af-26767a",
+             "s19-12603 edf1",
+             "s19-12603 gh",
+             "s20-10927 ej",
+             "s20-2923 de",
+             "s21-14734 cd",
+             "s21-15212 di",
+             "s21-20703 de",
+             "s21-24802 ab",
+             "s21-24802f s21-26917e",
+             "s21-26917 gh",
+             "s21-29214 hi",
+             "s22-14256 bc",
+             "s22-1471 de",
+             "s22-1471 fh",
+             "s22-15288 bc",
+             "s22-15288 fg",
+             "s22-20400 ef",
+             "s22-2422 gh",
+             "s22-2422 ij",
+             "s22-25312 de",
+             "s22-27851 ef",
+             "s22-27851 gh",
+             "s22-27851 ij",
+             "s22-7048 ef",
+             "s22-7048 gi",
+             "s22-849 eh",
+             "s23-11390 eg",
+             "s23-1287 ab",
+             "s23-15870 ab",
+             "s23-17903 gh",
+             "s23-17903i 22550d",
+             "s23-22550 fg",
+             "s23-22550 hi",
+             "s23-22560 dg",
+             "s23-25162 fg",
+             "s23-25162 hj",
+             "s23-25870c 17903d",
+             "s23-27903 ef",
+             "s23-28479 hj",
+             "s23-31792 bc",
+             "s23-31792e 32001a",
+             "s23-32001 bc",
+             "s23-3902 hi",
+             "s23-948j 9995e",
+             "s23-9995 fg",
+             "s23-9995h s24-1336d",
+             "s24-1662d 888a",
+             "s24-888ce")
+
+# 2) read each csv into a list of data frames
+df_list <- lapply(folders, function(folder) {
+  # construct the full file path
+  file_path <- file.path(folder, "2Mclust_Clusters_with_Dimensions_and_Additional_Info.csv")
+  
+  # read the csv
+  df <- read.csv(file_path)
+  
+  return(df)
+})
+
+# 3) combine all data frames by row
+combined_df <- do.call(rbind, df_list)
+
+# 4) inspect the first few rows of the combined data
+head(combined_df)
+
+# 5) export as csv
+write.csv(combined_df, "/data/s01020/ibd/separate/2Mclust_Clusters_with_Dimensions_and_Additional_Info.csv", row.names = FALSE) #8
+
+```
+
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
