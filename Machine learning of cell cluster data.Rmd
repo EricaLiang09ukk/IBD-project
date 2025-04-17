@@ -1,0 +1,852 @@
+---
+title: 'Machine learning of cell cluster data'
+author: "Yuyang liang"
+output: html_document
+date: "2025-03-24"
+---
+
+### load packages
+```{r}
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(e1071)
+library(xgboost)
+library(nnet)
+library(pROC)
+library(smotefamily)  
+library(ggplot2)
+library(MLmetrics)
+```
+
+
+### load data
+```{r}
+df1 <- read.csv("/global/home/hpc5476/IBD/Mclust_Clusters_with_Dimensions_and_Additional_Info.csv")
+df2 <- read.csv("/global/home/hpc5476/IBD/2Mclust_Clusters_with_Dimensions_and_Additional_Info.csv")
+# combining the Data
+df <- bind_rows(df1, df2)
+
+# to see if there is any missing values in the dataset
+sum(is.na(df))  
+
+# ensures that these columns are in the proper numeric formats
+df <- df %>%
+  mutate(
+    Hematoxylin = as.numeric(Hematoxylin),
+    Eosin = as.numeric(Eosin),
+    Mclust_Cluster = as.integer(Mclust_Cluster)
+  )
+
+# produces cluster-specific average measurements per patient
+patient_data <- df %>%
+  group_by(patient_id) %>%
+  summarise(
+    mean_Hematoxylin = mean(Hematoxylin, na.rm = TRUE),
+    sd_Hematoxylin = sd(Hematoxylin, na.rm = TRUE),
+    mean_Eosin = mean(Eosin, na.rm = TRUE),
+    sd_Eosin = sd(Eosin, na.rm = TRUE),
+
+    # compute mean Hematoxylin & Eosin expression per cluster (for all 20 clusters)
+    Mclust1_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 1], na.rm = TRUE),
+    Mclust2_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 2], na.rm = TRUE),
+    Mclust3_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 3], na.rm = TRUE),
+    Mclust4_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 4], na.rm = TRUE),
+    Mclust5_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 5], na.rm = TRUE),
+    Mclust6_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 6], na.rm = TRUE),
+    Mclust7_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 7], na.rm = TRUE),
+    Mclust8_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 8], na.rm = TRUE),
+    Mclust9_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 9], na.rm = TRUE),
+    Mclust10_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 10], na.rm = TRUE),
+    Mclust11_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 11], na.rm = TRUE),
+    Mclust12_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 12], na.rm = TRUE),
+    Mclust13_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 13], na.rm = TRUE),
+    Mclust14_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 14], na.rm = TRUE),
+    Mclust15_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 15], na.rm = TRUE),
+    Mclust16_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 16], na.rm = TRUE),
+    Mclust17_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 17], na.rm = TRUE),
+    Mclust18_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 18], na.rm = TRUE),
+    Mclust19_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 19], na.rm = TRUE),
+    Mclust20_mean_Hematoxylin = mean(Hematoxylin[Mclust_Cluster == 20], na.rm = TRUE),
+
+    Mclust1_mean_Eosin = mean(Eosin[Mclust_Cluster == 1], na.rm = TRUE),
+    Mclust2_mean_Eosin = mean(Eosin[Mclust_Cluster == 2], na.rm = TRUE),
+    Mclust3_mean_Eosin = mean(Eosin[Mclust_Cluster == 3], na.rm = TRUE),
+    Mclust4_mean_Eosin = mean(Eosin[Mclust_Cluster == 4], na.rm = TRUE),
+    Mclust5_mean_Eosin = mean(Eosin[Mclust_Cluster == 5], na.rm = TRUE),
+    Mclust6_mean_Eosin = mean(Eosin[Mclust_Cluster == 6], na.rm = TRUE),
+    Mclust7_mean_Eosin = mean(Eosin[Mclust_Cluster == 7], na.rm = TRUE),
+    Mclust8_mean_Eosin = mean(Eosin[Mclust_Cluster == 8], na.rm = TRUE),
+    Mclust9_mean_Eosin = mean(Eosin[Mclust_Cluster == 9], na.rm = TRUE),
+    Mclust10_mean_Eosin = mean(Eosin[Mclust_Cluster == 10], na.rm = TRUE),
+    Mclust11_mean_Eosin = mean(Eosin[Mclust_Cluster == 11], na.rm = TRUE),
+    Mclust12_mean_Eosin = mean(Eosin[Mclust_Cluster == 12], na.rm = TRUE),
+    Mclust13_mean_Eosin = mean(Eosin[Mclust_Cluster == 13], na.rm = TRUE),
+    Mclust14_mean_Eosin = mean(Eosin[Mclust_Cluster == 14], na.rm = TRUE),
+    Mclust15_mean_Eosin = mean(Eosin[Mclust_Cluster == 15], na.rm = TRUE),
+    Mclust16_mean_Eosin = mean(Eosin[Mclust_Cluster == 16], na.rm = TRUE),
+    Mclust17_mean_Eosin = mean(Eosin[Mclust_Cluster == 17], na.rm = TRUE),
+    Mclust18_mean_Eosin = mean(Eosin[Mclust_Cluster == 18], na.rm = TRUE),
+    Mclust19_mean_Eosin = mean(Eosin[Mclust_Cluster == 19], na.rm = TRUE),
+    Mclust20_mean_Eosin = mean(Eosin[Mclust_Cluster == 20], na.rm = TRUE),
+
+    # get the patient status 
+    indication2 = first(indication2),
+    indication = first(indication),           
+    indication_act = first(indication_act),   
+    indication_chron = first(indication_chron)
+  )%>%
+  # replace any remaining NAs with 0
+  replace(is.na(.), 0)
+
+# create new column indication_act2, turn "mild", "mod", "severe" to "y"
+patient_data <- patient_data %>%
+  mutate(
+    indication_act2 = case_when(
+      indication_act %in% c("mild", "mod", "severe") ~ "y",
+      indication_act == "n" ~ "n",
+      TRUE ~ NA_character_
+    )
+  )
+
+
+head(patient_data)
+
+write.csv(patient_data, "patient_data_combined.csv", row.names = FALSE)
+```
+
+
+# 1 path_any_abnormality models
+```{r}
+set.seed(123)
+
+data <- read.csv("patient_data_combined.csv", stringsAsFactors = FALSE)
+
+# converts the column indication2 into a factor
+data$indication2 <- as.factor(data$indication2)
+
+# removes the columns indication, indication_act,indication_act2, indication_chron, and patient_id
+# leaves only the predictor variables and the target variable (indication2) for model training.
+data <- data %>% select(-c(indication, indication_act, indication_act2, indication_chron, patient_id))
+# replaces all missing values in the data frame with 0
+data[is.na(data)] <- 0
+
+# splitting the data into training and testing
+trainIndex <- createDataPartition(data$indication2, p = 0.7, list = FALSE)
+train_data <- data[trainIndex, ]
+test_data <- data[-trainIndex, ]
+
+# SMOTE-balance the class distribution in the training data
+train_data_smote <- SMOTE(X = train_data[, !names(train_data) %in% "indication2"],
+                         target = train_data$indication2,
+                         dup_size = 2)  
+train_data_smote <- train_data_smote$data  
+colnames(train_data_smote)[ncol(train_data_smote)] <- "indication2"  
+train_data_smote$indication2 <- as.factor(train_data_smote$indication2)
+
+# setting up cross-validation control
+# https://topepo.github.io/caret/model-training-and-tuning.html
+control <- trainControl(method = "cv", number = 5, 
+                       classProbs = TRUE, 
+                       summaryFunction = twoClassSummary,
+                       savePredictions = TRUE)
+
+
+# 1, logistic regression model
+model_lr <- train(indication2 ~ ., data = train_data_smote, method = "glmnet",
+                 trControl = control, metric = "ROC", tuneLength = 5)
+
+# 2, random forest classifier
+model_rf <- train(indication2 ~ ., data = train_data_smote, method = "rf",
+                 trControl = control, metric = "ROC", tuneLength = 5)
+
+# 3, support vector machine
+model_svm <- train(indication2 ~ ., data = train_data_smote, method = "svmRadial",
+                  trControl = control, metric = "ROC", tuneLength = 5)
+
+# 4, XGBoost
+xgb_grid <- expand.grid(nrounds = c(50, 100), max_depth = c(3, 6), eta = c(0.01, 0.1),
+                       gamma = 0, colsample_bytree = 0.7, min_child_weight = 1, subsample = 0.8)
+model_xgb <- train(indication2 ~ ., data = train_data_smote, method = "xgbTree",
+                  trControl = control, metric = "ROC", tuneGrid = xgb_grid)
+
+# 5, k-nearest neighbors classifier
+model_knn <- train(indication2 ~ ., data = train_data_smote, method = "knn",
+                  trControl = control, metric = "ROC", tuneLength = 5)
+
+# 6, single-hidden-layer neural network model 
+model_nn <- train(indication2 ~ ., data = train_data_smote, method = "nnet",
+                 trControl = control, metric = "ROC", tuneLength = 5)
+
+# model list-stores all trained models in a named list for iteration and comparison
+models <- list(LR = model_lr, RF = model_rf, SVM = model_svm,
+              XGB = model_xgb, KNN = model_knn, NN = model_nn)
+
+# collects the cross-validation results from each models
+cv_results <- resamples(list(LR = model_lr, RF = model_rf, SVM = model_svm, 
+                             XGB = model_xgb, KNN = model_knn, NN = model_nn))
+summary(cv_results)
+bwplot(cv_results, metric = "ROC", main = "Model Comparison (ROC AUC)")
+```
+```{r}
+evaluate_model <- function(model, test_data, model_name) {
+  pred_prob <- predict(model, newdata = test_data, type = "prob") # predicted probabilities
+  pred_class <- predict(model, newdata = test_data) # class predictions
+  
+  cm <- confusionMatrix(pred_class, test_data$indication2)  # confusion matrix
+  print(paste("Confusion Matrix for", model_name))
+  print(cm)
+  
+  # extract performance metrics
+  sensitivity <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  precision <- cm$byClass["Pos Pred Value"]
+  recall <- sensitivity
+  
+  roc_obj <- roc(test_data$indication2, pred_prob[, "y"])   # ROC and AUC
+  auc_value <- auc(roc_obj) # AUC
+  
+  coords <- coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity")) # threshold, sensitivity, and specificity
+  youden_j <- coords$sensitivity + coords$specificity - 1   # Youden's J statistic
+  
+  cat(sprintf("\n%s - AUC: %.3f, Youden's J: %.3f, Optimal Threshold: %.3f\n", 
+              model_name, auc_value, youden_j, coords$threshold))
+  
+  return(list(roc = roc_obj, cm = cm, auc = auc_value, youden = youden_j))
+}
+
+results <- Map(function(model, name) evaluate_model(model, test_data, name), 
+              models, names(models))
+
+# plot ROC curves for each model
+par(mfrow = c(2, 3))
+for (name in names(results)) {
+  plot(results[[name]]$roc, main = paste(name, "ROC Curve"),
+       print.auc = TRUE, auc.polygon = TRUE)
+}
+
+# plot variable importance
+plot_var_imp <- function(model, model_name) {
+  if (!is.null(varImp(model))) {
+    plot(varImp(model), top = 10, main = paste("Variable Importance -", model_name))
+  }
+}
+
+par(mfrow = c(2, 3))
+Map(plot_var_imp, models, names(models))
+
+# cross-validation results and summary
+cv_results <- resamples(models)
+bwplot(cv_results, metric = "ROC", main = "Model Comparison (ROC AUC)")
+
+summary(cv_results)
+print("Test set AUC results:")
+print(lapply(results, function(x) x$auc))
+```
+
+```{r}
+
+# revised evaluate_model function that dynamically picks the positive class
+evaluate_model <- function(model, test_data, model_name) {
+  tryCatch({
+    # get predicted probabilities and predicted classes
+    pred_prob <- predict(model, newdata = test_data, type = "prob")
+    pred_class <- predict(model, newdata = test_data)
+    
+    # compute confusion matrix
+    cm <- confusionMatrix(pred_class, test_data$indication2)
+    cat(sprintf("Confusion Matrix for %s:\n", model_name))
+    print(cm)
+    
+    # extract performance metrics
+    sensitivity <- cm$byClass["Sensitivity"]
+    specificity <- cm$byClass["Specificity"]
+    precision <- cm$byClass["Pos Pred Value"]
+    recall <- sensitivity  
+    
+    # determine the positive class label
+    positive_class <- levels(test_data$indication2)[2]
+    
+    # compute ROC and AUC
+    roc_obj <- roc(test_data$indication2, pred_prob[, positive_class])
+    auc_value <- auc(roc_obj)
+    
+    # get optimal threshold details
+    coords_obj <- coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity"))
+    youden_j <- coords_obj["sensitivity"] + coords_obj["specificity"] - 1
+    
+    cat(sprintf("\n%s - AUC: %.3f, Youden's J: %.3f, Optimal Threshold: %.3f\n", 
+                model_name, auc_value, youden_j, coords_obj["threshold"]))
+    
+    # return list of evaluation metrics
+    return(list(roc = roc_obj, cm = cm, auc = auc_value, youden = youden_j))
+  }, error = function(e) {
+    warning(sprintf("Error evaluating model %s: %s", model_name, e$message))
+    return(NULL)
+  })
+}
+
+# evaluate each model
+results <- Map(function(model, name) evaluate_model(model, test_data, name), 
+               models, names(models))
+names(results) <- names(models)
+
+# ------------------ build the HTML table ------------------
+library(knitr)
+library(kableExtra)
+
+# create a data frame to store the metrics.
+# metrics: Accuracy, 95% CI, P-Value, Recall, Specificity, Precision, Neg Pred Value, AUC.
+metrics_table <- data.frame(
+  Metric = c("Accuracy", "95% CI", "P-Value", "Recall", "Specificity", 
+             "Precision", "Neg Pred Value", "AUC"),
+  LR  = NA,
+  RF  = NA,
+  SVM = NA,
+  XGB = NA,
+  KNN = NA,
+  NN  = NA,
+  stringsAsFactors = FALSE
+)
+
+# loop through each model's result to extract metrics
+for (model_name in names(results)) {
+  result <- results[[model_name]]
+  
+  # check if the result is valid
+  if (is.null(result) || !is.list(result)) {
+    warning(sprintf("Skipping model %s: no valid result returned.", model_name))
+    next
+  }
+  
+  cm <- result$cm
+  auc_val <- result$auc
+  
+  # extract metrics from the confusion matrix
+  accuracy <- cm$overall["Accuracy"]
+  ci <- paste0("[", round(cm$overall["AccuracyLower"], 3), ", ", 
+                  round(cm$overall["AccuracyUpper"], 3), "]")
+  p_value <- cm$overall["AccuracyPValue"]
+  recall <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  precision <- cm$byClass["Pos Pred Value"]
+  neg_pred_value <- cm$byClass["Neg Pred Value"]
+  
+  # populate the metrics_table
+  metrics_table[metrics_table$Metric == "Accuracy", model_name] <- round(accuracy, 3)
+  metrics_table[metrics_table$Metric == "95% CI", model_name] <- ci
+  metrics_table[metrics_table$Metric == "P-Value", model_name] <- round(p_value, 3)
+  metrics_table[metrics_table$Metric == "Recall", model_name] <- round(recall, 3)
+  metrics_table[metrics_table$Metric == "Specificity", model_name] <- round(specificity, 3)
+  metrics_table[metrics_table$Metric == "Precision", model_name] <- round(precision, 3)
+  metrics_table[metrics_table$Metric == "Neg Pred Value", model_name] <- round(neg_pred_value, 3)
+  metrics_table[metrics_table$Metric == "AUC", model_name] <- round(auc_val, 3)
+}
+
+# set row names and remove the redundant 'Metric' column
+rownames(metrics_table) <- metrics_table$Metric
+metrics_table$Metric <- NULL
+
+# create an HTML table with Booktabs styling
+html_table <- kable(metrics_table, format = "html", booktabs = TRUE,
+                    caption = "Model Performance Metrics") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+
+# display the HTML table
+print(html_table)
+
+
+```
+
+
+
+# 2 indication_act2 models
+```{r}
+set.seed(123)
+
+data <- read.csv("patient_data_combined.csv", stringsAsFactors = FALSE)
+
+# converts the column indication_act2 into a factor
+data$indication_act2 <- as.factor(data$indication_act2)
+
+# removes the columns indication, indication_act,indication2, indication_chron, and patient_id
+# leaves only the predictor variables and the target variable for model training
+data <- data %>% select(-c(indication, indication2, indication_chron, patient_id, indication_act))
+# replaces all missing values in the data frame with 0
+data[is.na(data)] <- 0
+
+# splitting the data into training and testing
+trainIndex <- createDataPartition(data$indication_act2, p = 0.7, list = FALSE)
+train_data <- data[trainIndex, ]
+test_data <- data[-trainIndex, ]
+
+# SMOTE-balance the class distribution in the training data
+train_data_smote <- SMOTE(X = train_data[, !names(train_data) %in% "indication_act2"],
+                         target = train_data$indication_act2,
+                         dup_size = 2)  
+train_data_smote <- train_data_smote$data  
+colnames(train_data_smote)[ncol(train_data_smote)] <- "indication_act2"  
+train_data_smote$indication_act2 <- as.factor(train_data_smote$indication_act2)
+
+# setting up cross-validation control
+# https://topepo.github.io/caret/model-training-and-tuning.html
+control <- trainControl(method = "cv", number = 5, 
+                       classProbs = TRUE, 
+                       summaryFunction = twoClassSummary,
+                       savePredictions = TRUE)
+
+
+# 1, logistic regression model
+model_lr <- train(indication_act2 ~ ., data = train_data_smote, method = "glmnet",
+                 trControl = control, metric = "ROC", tuneLength = 5)
+
+# 2, random forest classifier
+model_rf <- train(indication_act2 ~ ., data = train_data_smote, method = "rf",
+                 trControl = control, metric = "ROC", tuneLength = 5)
+
+# 3, support vector machine
+model_svm <- train(indication_act2 ~ ., data = train_data_smote, method = "svmRadial",
+                  trControl = control, metric = "ROC", tuneLength = 5)
+
+# 4, XGBoost
+xgb_grid <- expand.grid(nrounds = c(50, 100), max_depth = c(3, 6), eta = c(0.01, 0.1),
+                       gamma = 0, colsample_bytree = 0.7, min_child_weight = 1, subsample = 0.8)
+model_xgb <- train(indication_act2 ~ ., data = train_data_smote, method = "xgbTree",
+                  trControl = control, metric = "ROC", tuneGrid = xgb_grid)
+
+# 5, K-Nearest neighbors classifier
+model_knn <- train(indication_act2 ~ ., data = train_data_smote, method = "knn",
+                  trControl = control, metric = "ROC", tuneLength = 5)
+
+# 6, single-hidden-layer neural network model 
+model_nn <- train(indication_act2 ~ ., data = train_data_smote, method = "nnet",
+                 trControl = control, metric = "ROC", tuneLength = 5)
+
+# model list-stores all trained models in a named list for iteration and comparison
+models <- list(LR = model_lr, RF = model_rf, SVM = model_svm,
+              XGB = model_xgb, KNN = model_knn, NN = model_nn)
+
+# collects the cross-validation results from each models
+cv_results <- resamples(list(LR = model_lr, RF = model_rf, SVM = model_svm, 
+                             XGB = model_xgb, KNN = model_knn, NN = model_nn))
+summary(cv_results)
+bwplot(cv_results, metric = "ROC", main = "Model Comparison (ROC AUC)")
+```
+
+```{r}
+# 
+evaluate_model <- function(model, test_data, model_name) {
+  pred_prob <- predict(model, newdata = test_data, type = "prob") # predicted probabilities
+  pred_class <- predict(model, newdata = test_data) # class predictions
+  
+  cm <- confusionMatrix(pred_class, test_data$indication_act2)  # confusion matrix
+  print(paste("Confusion Matrix for", model_name))
+  print(cm)
+  
+  # extract performance metrics
+  sensitivity <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  precision <- cm$byClass["Pos Pred Value"]
+  recall <- sensitivity
+  
+  roc_obj <- roc(test_data$indication_act2, pred_prob[, "y"])   # ROC and AUC
+  auc_value <- auc(roc_obj) # AUC
+  
+  coords <- coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity")) # threshold, sensitivity, and specificity
+  youden_j <- coords$sensitivity + coords$specificity - 1   # Youden's J statistic
+  
+  cat(sprintf("\n%s - AUC: %.3f, Youden's J: %.3f, Optimal Threshold: %.3f\n", 
+              model_name, auc_value, youden_j, coords$threshold))
+  
+  return(list(roc = roc_obj, cm = cm, auc = auc_value, youden = youden_j))
+}
+
+results <- Map(function(model, name) evaluate_model(model, test_data, name), 
+              models, names(models))
+
+# Plot ROC Curves for Each Model
+par(mfrow = c(2, 3))
+for (name in names(results)) {
+  plot(results[[name]]$roc, main = paste(name, "ROC Curve"),
+       print.auc = TRUE, auc.polygon = TRUE)
+}
+
+# plot ROC curves for each model
+plot_var_imp <- function(model, model_name) {
+  if (!is.null(varImp(model))) {
+    plot(varImp(model), top = 10, main = paste("Variable Importance -", model_name))
+  }
+}
+
+par(mfrow = c(2, 3))
+Map(plot_var_imp, models, names(models))
+
+# cross-validation results and summary
+cv_results <- resamples(models)
+bwplot(cv_results, metric = "ROC", main = "Model Comparison (ROC AUC)")
+
+summary(cv_results)
+print("Test set AUC results:")
+print(lapply(results, function(x) x$auc))
+```
+
+```{r}
+# revised evaluate_model function that dynamically picks the positive class
+evaluate_model <- function(model, test_data, model_name) {
+  tryCatch({
+    # get predicted probabilities and predicted classes
+    pred_prob <- predict(model, newdata = test_data, type = "prob")
+    pred_class <- predict(model, newdata = test_data)
+    
+    # compute confusion matrix
+    cm <- confusionMatrix(pred_class, test_data$indication_act2)
+    cat(sprintf("Confusion Matrix for %s:\n", model_name))
+    print(cm)
+    
+    # extract performance metrics
+    sensitivity <- cm$byClass["Sensitivity"]
+    specificity <- cm$byClass["Specificity"]
+    precision <- cm$byClass["Pos Pred Value"]
+    recall <- sensitivity  
+    
+    # determine the positive class label
+    positive_class <- levels(test_data$indication_act2)[2]
+    
+    # compute ROC and AUC
+    roc_obj <- roc(test_data$indication_act2, pred_prob[, positive_class])
+    auc_value <- auc(roc_obj)
+    
+    # get optimal threshold details
+    coords_obj <- coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity"))
+    youden_j <- coords_obj["sensitivity"] + coords_obj["specificity"] - 1
+    
+    cat(sprintf("\n%s - AUC: %.3f, Youden's J: %.3f, Optimal Threshold: %.3f\n", 
+                model_name, auc_value, youden_j, coords_obj["threshold"]))
+    
+    # return list of evaluation metrics
+    return(list(roc = roc_obj, cm = cm, auc = auc_value, youden = youden_j))
+  }, error = function(e) {
+    warning(sprintf("Error evaluating model %s: %s", model_name, e$message))
+    return(NULL)
+  })
+}
+
+# evaluate each model
+results <- Map(function(model, name) evaluate_model(model, test_data, name), 
+               models, names(models))
+names(results) <- names(models)
+
+# ------------------ build the HTML table ------------------
+library(knitr)
+library(kableExtra)
+
+# create a data frame to store the metrics
+# metrics: Accuracy, 95% CI, P-Value, Recall, Specificity, Precision, Neg Pred Value, AUC
+metrics_table <- data.frame(
+  Metric = c("Accuracy", "95% CI", "P-Value", "Recall", "Specificity", 
+             "Precision", "Neg Pred Value", "AUC"),
+  LR  = NA,
+  RF  = NA,
+  SVM = NA,
+  XGB = NA,
+  KNN = NA,
+  NN  = NA,
+  stringsAsFactors = FALSE
+)
+
+# loop through each model's result to extract metrics
+for (model_name in names(results)) {
+  result <- results[[model_name]]
+  
+  # check if the result is valid
+  if (is.null(result) || !is.list(result)) {
+    warning(sprintf("Skipping model %s: no valid result returned.", model_name))
+    next
+  }
+  
+  cm <- result$cm
+  auc_val <- result$auc
+  
+  # extract metrics from the confusion matrix
+  accuracy <- cm$overall["Accuracy"]
+  ci <- paste0("[", round(cm$overall["AccuracyLower"], 3), ", ", 
+                  round(cm$overall["AccuracyUpper"], 3), "]")
+  p_value <- cm$overall["AccuracyPValue"]
+  recall <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  precision <- cm$byClass["Pos Pred Value"]
+  neg_pred_value <- cm$byClass["Neg Pred Value"]
+  
+  # populate the metrics_table
+  metrics_table[metrics_table$Metric == "Accuracy", model_name] <- round(accuracy, 3)
+  metrics_table[metrics_table$Metric == "95% CI", model_name] <- ci
+  metrics_table[metrics_table$Metric == "P-Value", model_name] <- round(p_value, 3)
+  metrics_table[metrics_table$Metric == "Recall", model_name] <- round(recall, 3)
+  metrics_table[metrics_table$Metric == "Specificity", model_name] <- round(specificity, 3)
+  metrics_table[metrics_table$Metric == "Precision", model_name] <- round(precision, 3)
+  metrics_table[metrics_table$Metric == "Neg Pred Value", model_name] <- round(neg_pred_value, 3)
+  metrics_table[metrics_table$Metric == "AUC", model_name] <- round(auc_val, 3)
+}
+
+# set row names and remove the redundant 'Metric' column
+rownames(metrics_table) <- metrics_table$Metric
+metrics_table$Metric <- NULL
+
+# create an HTML table with Booktabs styling
+html_table <- kable(metrics_table, format = "html", booktabs = TRUE,
+                    caption = "Model Performance Metrics") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+
+# display the HTML table
+print(html_table)
+
+
+
+```
+
+
+
+
+# 3 path_chron model training
+```{r}
+set.seed(123)
+
+data <- read.csv("patient_data_combined.csv", stringsAsFactors = FALSE)
+
+# converts the column indictaion_chron into a factor
+data$indication_chron <- as.factor(data$indication_chron)
+
+# removes the columns indication, indication_act,indication_act2, indication2, and patient_id
+# leaves only the predictor variables and the target variable for model training
+data <- data %>% select(-c(indication, indication_act, indication_act2, indication2, patient_id))
+# replaces all missing values in the data frame with 0
+data[is.na(data)] <- 0
+
+# splitting the data into training and testing
+trainIndex <- createDataPartition(data$indication_chron, p = 0.7, list = FALSE)
+train_data <- data[trainIndex, ]
+test_data <- data[-trainIndex, ]
+
+# SMOTE-balance the class distribution in the training data
+train_data_smote <- SMOTE(X = train_data[, !names(train_data) %in% "indication_chron"],
+                         target = train_data$indication_chron,
+                         dup_size = 2)  
+train_data_smote <- train_data_smote$data
+colnames(train_data_smote)[ncol(train_data_smote)] <- "indication_chron"
+train_data_smote$indication_chron <- as.factor(train_data_smote$indication_chron)
+train_data_smote[is.na(train_data_smote)] <- 0
+
+# setting up cross-validation control
+control <- trainControl(method = "cv", number = 5, classProbs = TRUE,
+                       summaryFunction = twoClassSummary, savePredictions = TRUE)
+
+# 1, logistic regression model
+model_lr <- train(indication_chron ~ ., data = train_data_smote, method = "glmnet",
+                 trControl = control, metric = "ROC", tuneLength = 5)
+
+# 2, random forest classifier
+model_rf <- train(indication_chron ~ ., data = train_data_smote, method = "rf",
+                 trControl = control, metric = "ROC", tuneLength = 5)
+
+# 3, support vector machine
+model_svm <- train(indication_chron ~ ., data = train_data_smote, method = "svmRadial",
+                  trControl = control, metric = "ROC", tuneLength = 5)
+
+# 4, XGBoost
+xgb_grid <- expand.grid(nrounds = c(50, 100), max_depth = c(3, 6), eta = c(0.01, 0.1),
+                       gamma = 0, colsample_bytree = 0.7, min_child_weight = 1, subsample = 0.8)
+model_xgb <- train(indication_chron ~ ., data = train_data_smote, method = "xgbTree",
+                  trControl = control, metric = "ROC", tuneGrid = xgb_grid)
+
+# 5, K-Nearest neighbors classifier
+model_knn <- train(indication_chron ~ ., data = train_data_smote, method = "knn",
+                  trControl = control, metric = "ROC", tuneLength = 5)
+
+# 6, single-hidden-layer neural network model 
+model_nn <- train(indication_chron ~ ., data = train_data_smote, method = "nnet",
+                 trControl = control, metric = "ROC", tuneLength = 5)
+
+# model list-stores all trained models in a named list for iteration and comparison
+models <- list(LR = model_lr, RF = model_rf, SVM = model_svm,
+              XGB = model_xgb, KNN = model_knn, NN = model_nn)
+
+cv_results <- resamples(models)
+bwplot(cv_results, metric = "ROC", main = "Model Comparison (ROC AUC)")
+
+```
+
+
+```{r}
+evaluate_model <- function(model, test_data, model_name) {
+  pred_prob <- predict(model, newdata = test_data, type = "prob") # predicted probabilities
+  pred_class <- predict(model, newdata = test_data) # class predictions
+  
+  cm <- confusionMatrix(pred_class, test_data$indication_chron)  # confusion matrix
+  print(paste("Confusion Matrix for", model_name))
+  print(cm)
+  
+  # extract performance metrics
+  sensitivity <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  precision <- cm$byClass["Pos Pred Value"]
+  recall <- sensitivity
+  
+  roc_obj <- roc(test_data$indication_chron, pred_prob[, "y"])   # ROC and AUC
+  auc_value <- auc(roc_obj) # AUC
+  
+  coords <- coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity")) # threshold, sensitivity, and specificity
+  youden_j <- coords$sensitivity + coords$specificity - 1   # Youden's J statistic
+  
+  cat(sprintf("\n%s - AUC: %.3f, Youden's J: %.3f, Optimal Threshold: %.3f\n", 
+              model_name, auc_value, youden_j, coords$threshold))
+  
+  return(list(roc = roc_obj, cm = cm, auc = auc_value, youden = youden_j))
+}
+
+results <- Map(function(model, name) evaluate_model(model, test_data, name), 
+              models, names(models))
+
+# plot ROC curves for each model
+par(mfrow = c(2, 3))
+for (name in names(results)) {
+  plot(results[[name]]$roc, main = paste(name, "ROC Curve"),
+       print.auc = TRUE, auc.polygon = TRUE)
+}
+
+# plot variable importance
+plot_var_imp <- function(model, model_name) {
+  if (!is.null(varImp(model))) {
+    plot(varImp(model), top = 10, main = paste("Variable Importance -", model_name))
+  }
+}
+
+par(mfrow = c(2, 3))
+Map(plot_var_imp, models, names(models))
+
+# cross-validation results and summary
+cv_results <- resamples(models)
+bwplot(cv_results, metric = "ROC", main = "Model Comparison (ROC AUC)")
+
+summary(cv_results)
+print("Test set AUC results:")
+print(lapply(results, function(x) x$auc))
+```
+
+
+```{r}
+# revised evaluate_model function that dynamically picks the positive class
+evaluate_model <- function(model, test_data, model_name) {
+  tryCatch({
+    # get predicted probabilities and predicted classes
+    pred_prob <- predict(model, newdata = test_data, type = "prob")
+    pred_class <- predict(model, newdata = test_data)
+    
+    # compute confusion matrix
+    cm <- confusionMatrix(pred_class, test_data$indication_chron)
+    cat(sprintf("Confusion Matrix for %s:\n", model_name))
+    print(cm)
+    
+    # extract performance metrics
+    sensitivity <- cm$byClass["Sensitivity"]
+    specificity <- cm$byClass["Specificity"]
+    precision <- cm$byClass["Pos Pred Value"]
+    recall <- sensitivity  
+    
+    # determine the positive class label
+    positive_class <- levels(test_data$indication_chron)[2]
+    
+    # compute ROC and AUC
+    roc_obj <- roc(test_data$indication_chron, pred_prob[, positive_class])
+    auc_value <- auc(roc_obj)
+    
+    # get optimal threshold details
+    coords_obj <- coords(roc_obj, "best", ret = c("threshold", "sensitivity", "specificity"))
+    youden_j <- coords_obj["sensitivity"] + coords_obj["specificity"] - 1
+    
+    cat(sprintf("\n%s - AUC: %.3f, Youden's J: %.3f, Optimal Threshold: %.3f\n", 
+                model_name, auc_value, youden_j, coords_obj["threshold"]))
+    
+    # return list of evaluation metrics
+    return(list(roc = roc_obj, cm = cm, auc = auc_value, youden = youden_j))
+  }, error = function(e) {
+    warning(sprintf("Error evaluating model %s: %s", model_name, e$message))
+    return(NULL)
+  })
+}
+
+# evaluate each model
+results <- Map(function(model, name) evaluate_model(model, test_data, name), 
+               models, names(models))
+names(results) <- names(models)
+
+# ------------------ build the HTML table ------------------
+library(knitr)
+library(kableExtra)
+
+# create a data frame to store the metrics
+# metrics: Accuracy, 95% CI, P-Value, Recall, Specificity, Precision, Neg Pred Value, AUC
+metrics_table <- data.frame(
+  Metric = c("Accuracy", "95% CI", "P-Value", "Recall", "Specificity", 
+             "Precision", "Neg Pred Value", "AUC"),
+  LR  = NA,
+  RF  = NA,
+  SVM = NA,
+  XGB = NA,
+  KNN = NA,
+  NN  = NA,
+  stringsAsFactors = FALSE
+)
+
+# loop through each model's result to extract metrics
+for (model_name in names(results)) {
+  result <- results[[model_name]]
+  
+  # check if the result is valid
+  if (is.null(result) || !is.list(result)) {
+    warning(sprintf("Skipping model %s: no valid result returned.", model_name))
+    next
+  }
+  
+  cm <- result$cm
+  auc_val <- result$auc
+  
+  # extract metrics from the confusion matrix
+  accuracy <- cm$overall["Accuracy"]
+  ci <- paste0("[", round(cm$overall["AccuracyLower"], 3), ", ", 
+                  round(cm$overall["AccuracyUpper"], 3), "]")
+  p_value <- cm$overall["AccuracyPValue"]
+  recall <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  precision <- cm$byClass["Pos Pred Value"]
+  neg_pred_value <- cm$byClass["Neg Pred Value"]
+  
+  # populate the metrics_table
+  metrics_table[metrics_table$Metric == "Accuracy", model_name] <- round(accuracy, 3)
+  metrics_table[metrics_table$Metric == "95% CI", model_name] <- ci
+  metrics_table[metrics_table$Metric == "P-Value", model_name] <- round(p_value, 3)
+  metrics_table[metrics_table$Metric == "Recall", model_name] <- round(recall, 3)
+  metrics_table[metrics_table$Metric == "Specificity", model_name] <- round(specificity, 3)
+  metrics_table[metrics_table$Metric == "Precision", model_name] <- round(precision, 3)
+  metrics_table[metrics_table$Metric == "Neg Pred Value", model_name] <- round(neg_pred_value, 3)
+  metrics_table[metrics_table$Metric == "AUC", model_name] <- round(auc_val, 3)
+}
+
+# set row names and remove the redundant 'Metric' column
+rownames(metrics_table) <- metrics_table$Metric
+metrics_table$Metric <- NULL
+
+# create an HTML table with Booktabs styling
+html_table <- kable(metrics_table, format = "html", booktabs = TRUE,
+                    caption = "Model Performance Metrics") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+
+# display the HTML table
+print(html_table)
+
+
+```
+
+
+
+
+
