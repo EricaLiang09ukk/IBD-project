@@ -2,7 +2,7 @@
  Codes for the IBD project: machine learning of the severity of ibd histological images
 # 🔬 Predicting Inflammation Severity in IBD with Machine Learning
 
-This repository contains the workflow and code for **analyzing histopathology images of Inflammatory Bowel Disease (IBD) using machine learning.  
+This repository contains the workflow and code for **analyzing histopathology images of Inflammatory Bowel Disease (IBD) using machine learning**.  
 It integrates **image preprocessing, single-cell feature extraction, clustering, and predictive modeling**.
 
 ---
@@ -27,7 +27,6 @@ It integrates **image preprocessing, single-cell feature extraction, clustering,
 2. **Pixel Classification & Segmentation** → CellProfiler & Ilastik  
 3. **Single-Cell Data Analysis** → Clustering & feature extraction  
 4. **Machine Learning** → Model training, evaluation (ROC-AUC, accuracy, precision, recall)
-![Workflow diagram](flow chart.png)
 
 
 ---
@@ -38,4 +37,6 @@ It integrates **image preprocessing, single-cell feature extraction, clustering,
 - **Abnormality detection:** Neural Networks had highest AUC (0.612); SVM achieved better accuracy  
 
 ---
+![Workflow diagram](flow_chart.png)
+
 
