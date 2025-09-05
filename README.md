@@ -1,9 +1,46 @@
 # IBD project
- Codes for the IBD project: machine learning of the severity of ibd histological images
 # 🔬 Predicting Inflammation Severity in IBD with Machine Learning
 
-This repository contains the workflow and code for **analyzing histopathology images of Inflammatory Bowel Disease (IBD) using machine learning**.  
-It integrates **image preprocessing, single-cell feature extraction, clustering, and predictive modeling**.
+This repository contains the complete workflow and codebase for analyzing **histopathology whole-slide images (WSIs) of Inflammatory Bowel Disease (IBD)** using machine learning.  
+The project demonstrates how image analysis and computational modeling can assist in **predicting the severity of inflammation** from routine H&E-stained biopsy slides.
+
+---
+
+## 📌 Project Overview
+IBD is a chronic inflammatory condition of the gastrointestinal tract, typically classified into **Crohn’s disease** and **Ulcerative colitis**. Accurate assessment of disease severity is critical for diagnosis, prognosis, and treatment decisions. Traditional histopathology is labor-intensive and subject to variability between pathologists.  
+
+This project aims to build an **automated pipeline** that extracts cellular features from WSIs and applies machine learning to classify:  
+- **Abnormality detection** (normal vs abnormal samples)  
+- **Acute inflammation** (presence/absence)  
+- **Chronic inflammation** (presence/absence)  
+
+---
+
+## ⚙️ Workflow Highlights
+The pipeline integrates multiple stages of computational pathology:
+
+1. **Image Preprocessing**  
+   - Resize whole-slide images to manageable dimensions  
+   - Convert single-channel histology images into **multichannel HED space** (Hematoxylin, Eosin, DAB)  
+
+2. **Pixel Classification & Segmentation**  
+   - Use **CellProfiler** and **Ilastik** to classify pixels into nucleus, cytoplasm, and background  
+   - Generate segmentation masks and extract per-cell features (morphology, intensity, spatial relationships)  
+
+3. **Single-Cell Data Analysis**  
+   - Build `SpatialExperiment` objects in R  
+   - Perform clustering with **Rphenograph + Mclust** to group cells based on staining intensities  
+   - Create cell- and cluster-level datasets  
+
+4. **Machine Learning**  
+   - Train multiple models (Logistic Regression, Random Forest, SVM, XGBoost, KNN, Neural Networks)  
+   - Apply **5-fold cross-validation** with **SMOTE balancing** for class imbalance  
+   - Evaluate using ROC-AUC, accuracy, precision, and recall  
+
+---
+
+## 🎯 Goal
+By combining **digital pathology** with **machine learning**, this project provides a proof-of-concept for computationally assisted IBD assessment. The ultimate objective is to **support pathologists and clinicians** with faster, reproducible, and more accurate inflammation scoring.
 
 ---
 
@@ -22,21 +59,14 @@ It integrates **image preprocessing, single-cell feature extraction, clustering,
 
 ---
 
-## ⚙️ Workflow
-1. **Image Preprocessing** → Resize & convert to HED multichannel images  
-2. **Pixel Classification & Segmentation** → CellProfiler & Ilastik  
-3. **Single-Cell Data Analysis** → Clustering & feature extraction  
-4. **Machine Learning** → Model training, evaluation (ROC-AUC, accuracy, precision, recall)
-
-
----
-
 ## 📊 Results
 - **Best model for acute inflammation:** Random Forest (AUC = 0.746, Accuracy = 70.7%)  
 - **Chronic inflammation detection:** Models showed lower performance (highest AUC = 0.632, SVM)  
 - **Abnormality detection:** Neural Networks had highest AUC (0.612); SVM achieved better accuracy  
 
+
 ---
+## 🧭 Overview
 ![Workflow diagram](flow_chart.png)
 
 
